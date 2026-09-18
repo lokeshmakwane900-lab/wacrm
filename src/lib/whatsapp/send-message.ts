@@ -47,6 +47,12 @@ import {
   templateBodyParams,
   templateContentText,
 } from '@/lib/whatsapp/template-body';
+import {
+  reserveMessageQuota,
+  commitMessageQuota,
+  releaseMessageQuota,
+  MessageQuotaError,
+} from '@/lib/saas/message-quota';
 
 export const MEDIA_KINDS = ['image', 'video', 'document', 'audio'] as const;
 export const VALID_MESSAGE_TYPES = [
@@ -339,6 +345,24 @@ export async function sendMessageToConversation(
     sendLanguage = resolved.language;
   }
 
+  // Reserve one outbound quota slot before touching Meta.
+  const quota = await reserveMessageQuota(
+    accountId,
+    'send_message_core'
+  ).catch((err) => {
+    if (err instanceof MessageQuotaError) {
+      throw new SendMessageError(
+        err.code,
+        err.message,
+        err.status
+      );
+    }
+
+    throw err;
+  });
+
+  const quotaReservationId = quota.reservationId;
+
   const attempt = async (phone: string): Promise<string> => {
     if (messageType === 'template') {
       const result = await sendTemplateMessage({
@@ -436,10 +460,29 @@ export async function sendMessageToConversation(
 
     if (lastError) throw lastError;
   } catch (err) {
+    await releaseMessageQuota(quotaReservationId);
+
     const message =
       err instanceof Error ? err.message : 'Unknown Meta API error';
+
     console.error('[send-message] Meta send failed for all variants:', message);
-    throw new SendMessageError('meta_error', `Meta API error: ${message}`, 502);
+
+    throw new SendMessageError(
+      'meta_error',
+      `Meta API error: ${message}`,
+      502
+    );
+  }
+
+  // Meta accepted the message. Quota stays consumed even if
+  // local database persistence fails afterwards.
+  const quotaCommitted = await commitMessageQuota(quotaReservationId);
+
+  if (!quotaCommitted) {
+    console.error(
+      '[send-message] Meta accepted message but quota commit failed:',
+      quotaReservationId
+    );
   }
 
   if (hasValidPhone && workingPhone !== sanitizedPhone) {
