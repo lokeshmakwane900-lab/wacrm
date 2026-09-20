@@ -29,6 +29,12 @@ import {
 import { resolveTemplateRow } from '@/lib/whatsapp/template-body';
 import type { MessageTemplate } from '@/types';
 import { findOrCreateContact } from '@/lib/api/v1/contacts';
+import {
+  reserveMessageQuota,
+  commitMessageQuota,
+  releaseMessageQuota,
+  MessageQuotaError,
+} from '@/lib/saas/message-quota';
 
 /** Thrown by createBroadcast on a caller-visible failure; route maps it. */
 export class BroadcastError extends Error {
@@ -63,6 +69,7 @@ interface PlannedRecipient {
 }
 
 export interface BroadcastPlan {
+  accountId: string;
   broadcastId: string;
   templateName: string;
   templateLanguage: string;
@@ -231,6 +238,7 @@ export async function createBroadcast(
   );
 
   return {
+    accountId,
     broadcastId,
     templateName,
     templateLanguage: resolvedTemplate.language,
@@ -260,6 +268,25 @@ export async function deliverBroadcast(
   plan: BroadcastPlan
 ): Promise<void> {
   for (const recipient of plan.planned) {
+    const quota = await reserveMessageQuota(
+      plan.accountId,
+      'broadcast_core'
+    ).catch((error) => {
+      let message = 'Unknown quota error';
+
+      if (error instanceof MessageQuotaError) {
+        message = `${error.code}: ${error.message}`;
+      } else if (error instanceof Error) {
+        message = error.message;
+      }
+
+      console.error('[broadcast-core] quota reserve failed:', message);
+      return null;
+    });
+
+    if (!quota) break;
+
+    const quotaReservationId = quota.reservationId;
     const variants = phoneVariants(recipient.phone);
     let sentMessageId: string | null = null;
     let lastError: string | null = null;
@@ -287,6 +314,14 @@ export async function deliverBroadcast(
     }
 
     if (sentMessageId) {
+      const quotaCommitted = await commitMessageQuota(quotaReservationId);
+
+      if (!quotaCommitted) {
+        console.error(
+          '[broadcast-core] Meta accepted message but quota commit failed:',
+          quotaReservationId
+        );
+      }
       await db
         .from('broadcast_recipients')
         .update({
@@ -297,6 +332,7 @@ export async function deliverBroadcast(
         })
         .eq('id', recipient.recipientRowId);
     } else {
+      await releaseMessageQuota(quotaReservationId);
       await db
         .from('broadcast_recipients')
         .update({

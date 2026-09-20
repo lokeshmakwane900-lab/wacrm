@@ -15,6 +15,12 @@ import {
   rateLimitResponse,
   RATE_LIMITS,
 } from '@/lib/rate-limit'
+import {
+  reserveMessageQuota,
+  commitMessageQuota,
+  releaseMessageQuota,
+  MessageQuotaError,
+} from '@/lib/saas/message-quota'
 
 interface BroadcastResult {
   phone: string
@@ -179,6 +185,33 @@ export async function POST(request: Request) {
 
       // Retry with phone variants on "not in allowed list" so numbers
       // that differ only in a trunk-prefix 0 still reach recipients.
+        const quota = await reserveMessageQuota(
+        accountId,
+        'whatsapp_broadcast'
+      ).catch((error) => {
+        let message = 'Unable to verify message quota'
+
+        if (error instanceof MessageQuotaError) {
+          message = `${error.code}: ${error.message}`
+        } else if (error instanceof Error) {
+          message = error.message
+        }
+
+        console.error('[whatsapp-broadcast] quota reserve failed:', message)
+        return { error: message }
+      })
+
+      if ('error' in quota) {
+        results.push({
+          phone: recipient.phone,
+          status: 'failed',
+          error: quota.error,
+        })
+        failedCount++
+        continue
+      }
+
+      const quotaReservationId = quota.reservationId
       const variants = phoneVariants(sanitized)
       let sentMessageId: string | null = null
       let lastError: string | null = null
@@ -211,6 +244,14 @@ export async function POST(request: Request) {
       }
 
       if (sentMessageId) {
+        const quotaCommitted = await commitMessageQuota(quotaReservationId)
+
+        if (!quotaCommitted) {
+          console.error(
+            '[whatsapp-broadcast] Meta accepted message but quota commit failed:',
+            quotaReservationId
+          )
+        }
         results.push({
           phone: recipient.phone,
           status: 'sent',
@@ -218,6 +259,7 @@ export async function POST(request: Request) {
         })
         sentCount++
       } else {
+        await releaseMessageQuota(quotaReservationId)
         console.error(
           `Failed to send broadcast to ${recipient.phone}:`,
           lastError
