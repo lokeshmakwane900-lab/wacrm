@@ -14,6 +14,13 @@ import {
   resolveTemplateRow,
   templateContentText,
 } from '@/lib/whatsapp/template-body'
+import {
+  reserveMessageQuota,
+  commitMessageQuota,
+  releaseMessageQuota,
+  MessageQuotaError,
+} from '@/lib/saas/message-quota'
+
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -190,6 +197,18 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
   // Same phone-variant retry as /api/whatsapp/send — Meta sandbox and
   // numbers registered with/without a trunk 0 both require this to
   // reliably land a message.
+  const quota = await reserveMessageQuota(
+    input.accountId,
+    'automation_send'
+  ).catch((error) => {
+    if (error instanceof MessageQuotaError) {
+      throw new Error(`${error.code}: ${error.message}`)
+    }
+
+    throw error
+  })
+
+  const quotaReservationId = quota.reservationId
   const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
   let workingPhone = sanitized
   let waMessageId = ''
@@ -202,12 +221,27 @@ async function sendViaMeta(input: SendInput): Promise<{ whatsapp_message_id: str
       break
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
+      if (!isRecipientNotAllowedError(msg)) {
+        await releaseMessageQuota(quotaReservationId)
+        throw err
+      }
       lastError = err
     }
   }
-  if (lastError) throw lastError
 
+  if (lastError) {
+    await releaseMessageQuota(quotaReservationId)
+    throw lastError
+  }
+
+  const quotaCommitted = await commitMessageQuota(quotaReservationId)
+
+  if (!quotaCommitted) {
+    console.error(
+      '[automation-send] Meta accepted message but quota commit failed:',
+      quotaReservationId
+    )
+  }
   if (sendTarget.isPhone && workingPhone !== sanitized) {
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
   }

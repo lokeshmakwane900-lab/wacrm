@@ -14,6 +14,11 @@ import {
   isRecipientNotAllowedError,
 } from '@/lib/whatsapp/phone-utils'
 import { resolveContactSendTarget } from '@/lib/whatsapp/wa-identity'
+import {
+  reserveMessageQuota,
+  commitMessageQuota,
+  releaseMessageQuota,
+} from '@/lib/saas/message-quota'
 import { supabaseAdmin } from './admin-client'
 
 // ------------------------------------------------------------
@@ -404,6 +409,13 @@ async function sendInteractiveViaMeta(
   // Same phone-variant retry as automations/meta-send.ts. Numbers
   // registered with/without a trunk 0 + Meta's sandbox quirks all
   // need this to reliably land a message.
+  const quota = await reserveMessageQuota(
+    input.accountId,
+    'flow_interactive'
+  )
+
+  const quotaReservationId = quota.reservationId
+
   const variants = sendTarget.isPhone ? phoneVariants(sanitized) : [sanitized]
   let workingPhone = sanitized
   let waMessageId = ''
@@ -416,11 +428,27 @@ async function sendInteractiveViaMeta(
       break
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err)
-      if (!isRecipientNotAllowedError(msg)) throw err
+      if (!isRecipientNotAllowedError(msg)) {
+        await releaseMessageQuota(quotaReservationId)
+        throw err
+      }
       lastError = err
     }
   }
-  if (lastError) throw lastError
+
+  if (lastError) {
+    await releaseMessageQuota(quotaReservationId)
+    throw lastError
+  }
+
+  const quotaCommitted = await commitMessageQuota(quotaReservationId)
+
+  if (!quotaCommitted) {
+    console.error(
+      '[flow-interactive] Meta accepted message but quota commit failed:',
+      quotaReservationId
+    )
+  }
 
   if (sendTarget.isPhone && workingPhone !== sanitized) {
     await db.from('contacts').update({ phone: workingPhone }).eq('id', contact.id)
