@@ -30,6 +30,7 @@ import type { SupabaseClient } from "@supabase/supabase-js";
 
 import { createClient } from "@/lib/supabase/server";
 import { hasMinRole, isAccountRole, type AccountRole } from "./roles";
+import { getAccountAccessState, type AccountAccessStatus } from "@/lib/saas/account-limits";
 
 // ------------------------------------------------------------
 // Errors
@@ -89,6 +90,8 @@ export interface AccountContext {
   role: AccountRole;
   /** Lightweight account meta — id + name. */
   account: { id: string; name: string };
+  accountStatus: AccountAccessStatus;
+  accountAccessReason: string;
 }
 
 /**
@@ -163,12 +166,22 @@ export async function getCurrentAccount(): Promise<AccountContext> {
     throw new ForbiddenError("Profile is not linked to an account");
   }
 
+  let accessState;
+  try {
+    accessState = await getAccountAccessState(supabase, data.account_id);
+  } catch (err) {
+    console.error("[getCurrentAccount] access-state fetch error:", err);
+    throw new ForbiddenError("Could not verify account status");
+  }
+
   return {
     supabase,
     userId: user.id,
     accountId: data.account_id,
     role: data.account_role,
     account: { id: account.id, name: account.name },
+    accountStatus: accessState.status,
+    accountAccessReason: accessState.reason,
   };
 }
 
@@ -181,6 +194,15 @@ export async function getCurrentAccount(): Promise<AccountContext> {
  */
 export async function requireRole(min: AccountRole): Promise<AccountContext> {
   const ctx = await getCurrentAccount();
+
+  if (ctx.accountStatus !== "active") {
+    throw new ForbiddenError(
+      ctx.accountStatus === "suspended"
+        ? "This account is suspended"
+        : "This account plan has expired",
+    );
+  }
+
   if (!hasMinRole(ctx.role, min)) {
     throw new ForbiddenError(
       `This action requires the '${min}' role or higher`,

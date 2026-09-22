@@ -73,3 +73,29 @@ export function accountLimitMessage(
 
   return `${label} creation is not allowed for the current plan.`
 }
+export type AccountAccessStatus = "active" | "suspended" | "expired"
+
+export interface AccountAccessState {
+  status: AccountAccessStatus
+  reason: string
+}
+
+export async function getAccountAccessState(
+  db: SupabaseClient,
+  accountId: string,
+): Promise<AccountAccessState> {
+  const resource = await getAccountResourceLimit(db, accountId, "users")
+
+  if (resource.reason === "account_suspended") {
+    return { status: "suspended", reason: resource.reason }
+  }
+
+  if (
+    resource.reason === "account_expired" ||
+    resource.reason === "plan_inactive_or_expired"
+  ) {
+    return { status: "expired", reason: resource.reason }
+  }
+
+  return { status: "active", reason: resource.reason }
+}

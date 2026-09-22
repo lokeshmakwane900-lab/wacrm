@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { notFound, redirect } from 'next/navigation'
+import { redirect } from 'next/navigation'
 
 import { PlatformShell } from './platform-shell'
 import { requirePlatformAdmin } from '@/lib/auth/platform'
@@ -26,7 +26,7 @@ export default async function PlatformLayout({
       redirect('/login')
     }
     if (error instanceof ForbiddenError) {
-      notFound()
+      redirect('/dashboard')
     }
     throw error
   }
