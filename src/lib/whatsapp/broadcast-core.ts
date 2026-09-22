@@ -160,7 +160,7 @@ export async function createBroadcast(
     }
     const { id } = await findOrCreateContact(db, accountId, auditUserId, {
       phone: sanitized,
-    });
+    }, true);
     resolved.push({
       contactId: id,
       phone: sanitized,

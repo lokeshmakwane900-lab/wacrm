@@ -13,6 +13,7 @@ import { findExistingContact, isUniqueViolation } from '@/lib/contacts/dedupe';
 import { resolveImportTagIds } from '@/lib/contacts/resolve-import-tags';
 import { addContactTagAndDispatch } from '@/lib/contacts/tag-events';
 import { sanitizePhoneForMeta, isValidE164 } from '@/lib/whatsapp/phone-utils';
+import { accountLimitMessage, getAccountResourceLimit } from '@/lib/saas/account-limits';
 
 /** Row select that embeds the contact's tags for serialization. */
 export const CONTACT_SELECT = '*, contact_tags(tags(*))';
@@ -111,7 +112,8 @@ export async function findOrCreateContact(
   db: SupabaseClient,
   accountId: string,
   auditUserId: string,
-  input: ContactInput
+  input: ContactInput,
+  enforcePlanLimit = false
 ): Promise<{ id: string; created: boolean }> {
   const sanitized = sanitizePhoneForMeta(input.phone);
   if (!isValidE164(sanitized)) {
@@ -123,6 +125,21 @@ export async function findOrCreateContact(
 
   const existing = await findExistingContact(db, accountId, sanitized);
   if (existing) return { id: existing.id, created: false };
+
+  if (enforcePlanLimit) {
+    const contactLimit = await getAccountResourceLimit(
+      db,
+      accountId,
+      'contacts'
+    );
+
+    if (!contactLimit.allowed) {
+      throw new ContactError(
+        accountLimitMessage(contactLimit, 'contacts'),
+        400
+      );
+    }
+  }
 
   const { data: created, error } = await db
     .from('contacts')

@@ -121,7 +121,8 @@ export async function POST(request: Request) {
         name: typeof body.name === 'string' ? body.name : undefined,
         email: typeof body.email === 'string' ? body.email : undefined,
         company: typeof body.company === 'string' ? body.company : undefined,
-      }
+      },
+      true
     );
 
     if (Array.isArray(body.tags)) {

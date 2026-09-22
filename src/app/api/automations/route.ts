@@ -1,3 +1,4 @@
+import { accountLimitMessage, getAccountResourceLimit } from '@/lib/saas/account-limits'
 import { NextResponse } from 'next/server'
 import { createClient } from '@/lib/supabase/server'
 import { requireRole, toErrorResponse } from '@/lib/auth/account'
@@ -105,6 +106,22 @@ export async function POST(request: Request) {
   }
 
   const admin = supabaseAdmin()
+
+  if (is_active) {
+    const automationLimit = await getAccountResourceLimit(
+      admin,
+      accountId,
+      'automations',
+    )
+
+    if (!automationLimit.allowed) {
+      return NextResponse.json(
+        { error: accountLimitMessage(automationLimit, 'automations') },
+        { status: 403 },
+      )
+    }
+  }
+
   const { data: automation, error: insertErr } = await admin
     .from('automations')
     .insert({
