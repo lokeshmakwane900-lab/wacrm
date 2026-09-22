@@ -49,7 +49,7 @@ export default async function PlatformPlansPage() {
             </label>
 
             <label className="space-y-1 text-sm">
-              <span className="text-muted-foreground">Monthly price (â‚¹)</span>
+              <span className="text-muted-foreground">Monthly price (INR)</span>
               <input name="monthly_price" type="number" min="0" step="1" defaultValue="0" className="w-full rounded-lg border border-border bg-background px-3 py-2" />
             </label>
 

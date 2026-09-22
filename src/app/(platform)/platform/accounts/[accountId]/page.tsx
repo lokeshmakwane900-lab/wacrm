@@ -1,11 +1,14 @@
 import Link from "next/link"
 import { notFound } from "next/navigation"
 import { requirePlatformAdmin } from "@/lib/auth/platform"
+import { ConfirmSubmitButton } from "../confirm-submit-button"
 import {
   assignAccountPlanAction,
   cancelAccountPlanAction,
   setAccountStatusAction,
 } from "../actions"
+
+type AuditDetails = Record<string, unknown>
 
 function formatDateTime(value: string | null) {
   if (!value) return "No expiry"
@@ -29,6 +32,55 @@ function formatUsage(value: unknown, limit: unknown) {
   return `${used} / ${max}`
 }
 
+function asDetails(value: unknown): AuditDetails {
+  return value && typeof value === "object"
+    ? (value as AuditDetails)
+    : {}
+}
+
+function activityText(
+  action: string,
+  detailsValue: unknown,
+  planMap: Map<string, string>,
+) {
+  const details = asDetails(detailsValue)
+
+  if (action === "status_changed") {
+    return `Status changed: ${String(details.old_status ?? "unknown")} to ${String(
+      details.new_status ?? "unknown",
+    )}`
+  }
+
+  if (action === "status_created") {
+    return `Status created: ${String(details.status ?? "unknown")}`
+  }
+
+  if (action === "plan_assigned") {
+    const planId = String(details.plan_id ?? "")
+    return `Plan assigned: ${planMap.get(planId) ?? "Unknown plan"}`
+  }
+
+  if (action === "plan_cancelled") {
+    const planId = String(details.plan_id ?? "")
+    return `Plan cancelled: ${planMap.get(planId) ?? "Unknown plan"}`
+  }
+
+  if (action === "plan_changed") {
+    const oldPlanId = String(details.old_plan_id ?? "")
+    const newPlanId = String(details.new_plan_id ?? "")
+    const oldName = planMap.get(oldPlanId) ?? "Unknown plan"
+    const newName = planMap.get(newPlanId) ?? "Unknown plan"
+
+    if (oldPlanId === newPlanId) {
+      return `Plan dates updated: ${newName}`
+    }
+
+    return `Plan changed: ${oldName} to ${newName}`
+  }
+
+  return action.replaceAll("_", " ")
+}
+
 export default async function PlatformClientPage({
   params,
 }: {
@@ -43,6 +95,7 @@ export default async function PlatformClientPage({
     assignmentResult,
     plansResult,
     usageResult,
+    auditResult,
   ] = await Promise.all([
     supabase
       .from("accounts")
@@ -70,6 +123,13 @@ export default async function PlatformClientPage({
     supabase.rpc("get_account_usage", {
       p_account_id: accountId,
     }),
+
+    supabase
+      .from("platform_audit_logs")
+      .select("id,actor_email,action,details,created_at")
+      .eq("account_id", accountId)
+      .order("created_at", { ascending: false })
+      .limit(20),
   ])
 
   if (accountResult.error) throw accountResult.error
@@ -79,6 +139,7 @@ export default async function PlatformClientPage({
   if (assignmentResult.error) throw assignmentResult.error
   if (plansResult.error) throw plansResult.error
   if (usageResult.error) throw usageResult.error
+  if (auditResult.error) throw auditResult.error
 
   const account = accountResult.data
   const status = statusResult.data?.status ?? "unknown"
@@ -89,6 +150,11 @@ export default async function PlatformClientPage({
     ? plans.find((plan) => plan.id === assignment.plan_id) ?? null
     : null
   const usage = usageResult.data?.[0] ?? null
+  const auditLogs = auditResult.data ?? []
+
+  const planMap = new Map(
+    plans.map((plan) => [plan.id, plan.name]),
+  )
 
   const now = Date.now()
   const hasCurrentPlan =
@@ -107,7 +173,7 @@ export default async function PlatformClientPage({
               href="/platform/accounts"
               className="text-sm text-muted-foreground hover:text-foreground"
             >
-              â† Back to clients
+              Back to clients
             </Link>
 
             <h1 className="mt-3 text-3xl font-semibold tracking-tight">
@@ -140,7 +206,7 @@ export default async function PlatformClientPage({
           <div className="rounded-2xl border border-border bg-card p-5">
             <p className="text-sm text-muted-foreground">Plan expiry</p>
             <p className="mt-2 text-lg font-semibold">
-              {hasCurrentPlan ? formatDateTime(assignment?.expires_at ?? null) : "â€”"}
+              {hasCurrentPlan ? formatDateTime(assignment?.expires_at ?? null) : "Not set"}
             </p>
           </div>
 
@@ -180,12 +246,12 @@ export default async function PlatformClientPage({
                 <form action={setAccountStatusAction}>
                   <input type="hidden" name="account_id" value={account.id} />
                   <input type="hidden" name="status" value="suspended" />
-                  <button
-                    type="submit"
+                  <ConfirmSubmitButton
+                    message="Suspend this client? Outbound WhatsApp sending will be blocked until reactivated."
                     className="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
                   >
                     Suspend
-                  </button>
+                  </ConfirmSubmitButton>
                 </form>
               ) : null}
 
@@ -193,12 +259,12 @@ export default async function PlatformClientPage({
                 <form action={setAccountStatusAction}>
                   <input type="hidden" name="account_id" value={account.id} />
                   <input type="hidden" name="status" value="expired" />
-                  <button
-                    type="submit"
+                  <ConfirmSubmitButton
+                    message="Mark this client as expired? Outbound WhatsApp sending will be blocked."
                     className="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
                   >
                     Mark expired
-                  </button>
+                  </ConfirmSubmitButton>
                 </form>
               ) : null}
             </div>
@@ -271,19 +337,19 @@ export default async function PlatformClientPage({
             {assignment && !assignment.cancelled_at ? (
               <div className="mt-5 border-t border-border pt-5">
                 <p className="text-sm text-muted-foreground">
-                  Assigned plan: {currentPlan?.name ?? "Unknown plan"} Â· starts{" "}
-                  {formatDateTime(assignment.starts_at)} Â· expiry{" "}
+                  Assigned plan: {currentPlan?.name ?? "Unknown plan"} | starts{" "}
+                  {formatDateTime(assignment.starts_at)} | expiry{" "}
                   {formatDateTime(assignment.expires_at)}
                 </p>
 
                 <form action={cancelAccountPlanAction} className="mt-3">
                   <input type="hidden" name="account_id" value={account.id} />
-                  <button
-                    type="submit"
+                  <ConfirmSubmitButton
+                    message="Cancel this client's current plan? The account will no longer have an active plan."
                     className="rounded-lg border border-border px-4 py-2 text-sm font-medium hover:bg-muted"
                   >
                     Cancel plan
-                  </button>
+                  </ConfirmSubmitButton>
                 </form>
               </div>
             ) : null}
@@ -317,6 +383,54 @@ export default async function PlatformClientPage({
                 <p className="mt-2 text-xl font-semibold">{value}</p>
               </div>
             ))}
+          </div>
+        </section>
+
+        <section className="rounded-2xl border border-border bg-card">
+          <div className="border-b border-border p-5">
+            <h2 className="text-lg font-semibold">Recent activity</h2>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Latest Super Admin changes for this client.
+            </p>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-border text-muted-foreground">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Action</th>
+                  <th className="px-5 py-3 font-medium">Admin</th>
+                  <th className="px-5 py-3 font-medium">When</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-border">
+                {auditLogs.map((log) => (
+                  <tr key={log.id}>
+                    <td className="px-5 py-4">
+                      {activityText(log.action, log.details, planMap)}
+                    </td>
+                    <td className="px-5 py-4 text-muted-foreground">
+                      {log.actor_email ?? "Platform admin"}
+                    </td>
+                    <td className="px-5 py-4 text-muted-foreground">
+                      {formatDateTime(log.created_at)}
+                    </td>
+                  </tr>
+                ))}
+
+                {auditLogs.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={3}
+                      className="px-5 py-10 text-center text-muted-foreground"
+                    >
+                      No audited changes yet.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
           </div>
         </section>
       </div>
