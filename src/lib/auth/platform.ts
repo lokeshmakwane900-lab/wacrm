@@ -9,6 +9,27 @@ export interface PlatformAdminContext {
   user: User
 }
 
+export async function isPlatformAdmin(): Promise<boolean> {
+  const supabase = await createClient()
+
+  const {
+    data: { user },
+    error: userError,
+  } = await supabase.auth.getUser()
+
+  if (userError || !user) {
+    return false
+  }
+
+  const { data, error } = await supabase.rpc('is_platform_admin')
+
+  if (error) {
+    console.error('[isPlatformAdmin] platform admin check failed:', error)
+    return false
+  }
+
+  return data === true
+}
 export async function requirePlatformAdmin(): Promise<PlatformAdminContext> {
   const supabase = await createClient()
 

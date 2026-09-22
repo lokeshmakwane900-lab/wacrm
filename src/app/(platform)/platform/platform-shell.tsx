@@ -12,6 +12,7 @@ import {
 } from 'lucide-react'
 
 import { ModeToggle } from '@/components/layout/mode-toggle'
+import { AppModeSwitch } from '@/components/layout/app-mode-switch'
 import { cn } from '@/lib/utils'
 
 const navItems = [
@@ -61,13 +62,13 @@ export function PlatformShell({ children }: { children: React.ReactNode }) {
           </ul>
         </nav>
         <div className="border-t border-border p-3">
-          <Link href="/dashboard" className="flex items-center justify-center rounded-lg border border-border px-3 py-2 text-sm font-medium text-foreground transition-colors hover:bg-muted">Open WACRM</Link>
+          <AppModeSwitch current="platform" className="w-full justify-center" />
         </div>
       </aside>
       <div className="min-w-0 flex-1">
         <header className="flex h-14 items-center justify-between gap-3 border-b border-border bg-background px-4 sm:px-6">
           <div><p className="text-xs text-muted-foreground">MK Creative Platform</p><h1 className="text-base font-semibold text-foreground sm:text-lg">{pageTitle(pathname)}</h1></div>
-          <div className="flex items-center gap-2"><ModeToggle /><Link href="/dashboard" className="hidden rounded-md border border-border px-3 py-2 text-sm font-medium text-foreground hover:bg-muted sm:inline-flex">WACRM</Link></div>
+          <div className="flex items-center gap-2"><ModeToggle /><AppModeSwitch current="platform" /></div>
         </header>
         <nav className="flex gap-1 overflow-x-auto border-b border-border bg-card px-3 py-2 lg:hidden">
           {navItems.map((item) => {

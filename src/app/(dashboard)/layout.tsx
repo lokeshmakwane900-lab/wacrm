@@ -1,5 +1,7 @@
 import type { Metadata } from "next";
 import { getCurrentAccount } from "@/lib/auth/account";
+import { isPlatformAdmin } from "@/lib/auth/platform";
+import { AppModeSwitch } from "@/components/layout/app-mode-switch";
 import { DashboardShell } from "./dashboard-shell";
 
 export const metadata: Metadata = {
@@ -18,9 +20,11 @@ export const metadata: Metadata = {
 function AccountBlocked({
   status,
   accountName,
+  isPlatformAdmin,
 }: {
   status: "suspended" | "expired";
   accountName: string;
+  isPlatformAdmin: boolean;
 }) {
   const suspended = status === "suspended";
 
@@ -45,6 +49,12 @@ function AccountBlocked({
           <p className="text-xs text-muted-foreground">Workspace</p>
           <p className="mt-1 font-medium">{accountName}</p>
         </div>
+
+        {isPlatformAdmin ? (
+          <div className="mt-6 flex justify-center">
+            <AppModeSwitch current="wacrm" />
+          </div>
+        ) : null}
       </div>
     </main>
   );
@@ -55,16 +65,20 @@ export default async function DashboardLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const ctx = await getCurrentAccount();
+  const [ctx, platformAdmin] = await Promise.all([
+    getCurrentAccount(),
+    isPlatformAdmin(),
+  ]);
 
   if (ctx.accountStatus !== "active") {
     return (
       <AccountBlocked
         status={ctx.accountStatus}
         accountName={ctx.account.name}
+        isPlatformAdmin={platformAdmin}
       />
     );
   }
 
-  return <DashboardShell>{children}</DashboardShell>;
+  return <DashboardShell isPlatformAdmin={platformAdmin}>{children}</DashboardShell>;
 }
