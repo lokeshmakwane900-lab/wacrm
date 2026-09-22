@@ -1,256 +1,186 @@
-import { requirePlatformAdmin } from '@/lib/auth/platform'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import Link from "next/link"
+import { requirePlatformAdmin } from "@/lib/auth/platform"
 
-type AccountRow = {
-  id: string
-  name: string
-  created_at: string
-}
+type AccountStatus = "active" | "suspended" | "expired"
 
-type StatusRow = {
-  account_id: string
-  status: 'active' | 'suspended' | 'expired'
-}
-
-type AccountPlanRow = {
-  account_id: string
-  plan_id: string
-  starts_at: string
-  expires_at: string | null
-  cancelled_at: string | null
-}
-
-type PlanRow = {
-  id: string
-  name: string
-}
-
-function statusClass(status: string) {
-  if (status === 'active') {
-    return 'border-emerald-500/20 bg-emerald-500/10 text-emerald-400'
-  }
-  if (status === 'suspended') {
-    return 'border-amber-500/20 bg-amber-500/10 text-amber-400'
-  }
-  if (status === 'expired') {
-    return 'border-red-500/20 bg-red-500/10 text-red-400'
-  }
-  return 'border-border bg-muted text-muted-foreground'
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  }).format(new Date(value))
 }
 
 export default async function PlatformAccountsPage() {
   const { supabase } = await requirePlatformAdmin()
 
-  const { data: accountData, error: accountError } = await supabase
-    .from('accounts')
-    .select('id, name, created_at')
-    .order('created_at', { ascending: false })
+  const { data: accounts, error: accountsError } = await supabase
+    .from("accounts")
+    .select("id,name,created_at")
+    .order("created_at", { ascending: false })
 
-  if (accountError) {
-    console.error('[platform/accounts] accounts query failed:', accountError)
-    throw new Error('Could not load platform accounts')
+  if (accountsError) {
+    throw new Error(`Accounts failed: ${accountsError.message}`)
   }
 
-  const accounts = (accountData ?? []) as AccountRow[]
-  const accountIds = accounts.map((account) => account.id)
+  const accountRows = accounts ?? []
+  const accountIds = accountRows.map((account) => account.id)
 
-  let statuses: StatusRow[] = []
-  let accountPlans: AccountPlanRow[] = []
+  const [statusResult, assignmentResult, planResult] = await Promise.all([
+    accountIds.length
+      ? supabase
+          .from("account_statuses")
+          .select("account_id,status")
+          .in("account_id", accountIds)
+      : Promise.resolve({ data: [], error: null }),
+    accountIds.length
+      ? supabase
+          .from("account_plans")
+          .select("account_id,plan_id,starts_at,expires_at,cancelled_at")
+          .in("account_id", accountIds)
+      : Promise.resolve({ data: [], error: null }),
+    supabase
+      .from("plans")
+      .select("id,name")
+      .order("sort_order", { ascending: true }),
+  ])
 
-  if (accountIds.length > 0) {
-    const [statusResult, planResult] = await Promise.all([
-      supabase
-        .from('account_statuses')
-        .select('account_id, status')
-        .in('account_id', accountIds),
-      supabase
-        .from('account_plans')
-        .select('account_id, plan_id, starts_at, expires_at, cancelled_at')
-        .in('account_id', accountIds),
-    ])
+  if (statusResult.error) throw statusResult.error
+  if (assignmentResult.error) throw assignmentResult.error
+  if (planResult.error) throw planResult.error
 
-    if (statusResult.error) {
-      console.error('[platform/accounts] statuses query failed:', statusResult.error)
-      throw new Error('Could not load account statuses')
-    }
-
-    if (planResult.error) {
-      console.error('[platform/accounts] account plans query failed:', planResult.error)
-      throw new Error('Could not load account plans')
-    }
-
-    statuses = (statusResult.data ?? []) as StatusRow[]
-    accountPlans = (planResult.data ?? []) as AccountPlanRow[]
-  }
-
-  const planIds = [...new Set(accountPlans.map((row) => row.plan_id))]
-  let plans: PlanRow[] = []
-
-  if (planIds.length > 0) {
-    const { data: planData, error: planError } = await supabase
-      .from('plans')
-      .select('id, name')
-      .in('id', planIds)
-
-    if (planError) {
-      console.error('[platform/accounts] plans query failed:', planError)
-      throw new Error('Could not load plans')
-    }
-
-    plans = (planData ?? []) as PlanRow[]
-  }
-
-  const statusByAccount = new Map(
-    statuses.map((row) => [row.account_id, row.status])
+  const statusMap = new Map(
+    (statusResult.data ?? []).map((row) => [
+      row.account_id,
+      row.status as AccountStatus,
+    ]),
   )
-  const planById = new Map(plans.map((plan) => [plan.id, plan.name]))
-  const assignmentByAccount = new Map(
-    accountPlans.map((assignment) => [assignment.account_id, assignment])
+
+  const planMap = new Map(
+    (planResult.data ?? []).map((plan) => [plan.id, plan.name]),
   )
 
   const now = Date.now()
+  const currentPlanMap = new Map<string, string>()
 
-  const rows = accounts.map((account) => {
-    const status = statusByAccount.get(account.id) ?? 'unknown'
-    const assignment = assignmentByAccount.get(account.id)
+  for (const assignment of assignmentResult.data ?? []) {
+    const starts = new Date(assignment.starts_at).getTime()
+    const expires = assignment.expires_at
+      ? new Date(assignment.expires_at).getTime()
+      : null
 
-    const hasCurrentPlan =
-      assignment !== undefined &&
-      assignment.cancelled_at === null &&
-      new Date(assignment.starts_at).getTime() <= now &&
-      (assignment.expires_at === null ||
-        new Date(assignment.expires_at).getTime() > now)
-
-    return {
-      ...account,
-      status,
-      planName:
-        hasCurrentPlan && assignment
-          ? planById.get(assignment.plan_id) ?? 'Unknown plan'
-          : 'No current plan',
+    if (
+      !assignment.cancelled_at &&
+      starts <= now &&
+      (expires === null || expires > now)
+    ) {
+      currentPlanMap.set(
+        assignment.account_id,
+        planMap.get(assignment.plan_id) ?? "Unknown plan",
+      )
     }
-  })
+  }
 
-  const activeCount = rows.filter((row) => row.status === 'active').length
-  const suspendedCount = rows.filter(
-    (row) => row.status === 'suspended'
+  const total = accountRows.length
+  const active = accountRows.filter(
+    (account) => statusMap.get(account.id) === "active",
   ).length
-  const expiredCount = rows.filter((row) => row.status === 'expired').length
-
-  const dateFormatter = new Intl.DateTimeFormat('en-IN', {
-    day: '2-digit',
-    month: 'short',
-    year: 'numeric',
-  })
+  const suspended = accountRows.filter(
+    (account) => statusMap.get(account.id) === "suspended",
+  ).length
+  const expired = accountRows.filter(
+    (account) => statusMap.get(account.id) === "expired",
+  ).length
 
   return (
     <main className="min-h-screen bg-background p-4 sm:p-6">
       <div className="mx-auto max-w-7xl space-y-6">
         <div>
-          <p className="text-sm font-medium text-muted-foreground">
-            MK Creative · Platform Admin
-          </p>
-          <h1 className="mt-1 text-3xl font-semibold tracking-tight">
+          <p className="text-sm font-medium text-muted-foreground">MK Creative</p>
+          <h1 className="mt-2 text-3xl font-semibold tracking-tight">
             Clients & Accounts
           </h1>
-          <p className="mt-2 text-sm text-muted-foreground">
-            Read-only overview of every WACRM customer account.
+          <p className="mt-2 text-muted-foreground">
+            Open a client to manage plan, status, expiry and usage.
           </p>
         </div>
 
-        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Total accounts</CardDescription>
-              <CardTitle className="text-3xl">{rows.length}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Active</CardDescription>
-              <CardTitle className="text-3xl">{activeCount}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Suspended</CardDescription>
-              <CardTitle className="text-3xl">{suspendedCount}</CardTitle>
-            </CardHeader>
-          </Card>
-          <Card>
-            <CardHeader className="pb-2">
-              <CardDescription>Expired</CardDescription>
-              <CardTitle className="text-3xl">{expiredCount}</CardTitle>
-            </CardHeader>
-          </Card>
-        </div>
+        <section className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+          {[
+            ["Total accounts", total],
+            ["Active", active],
+            ["Suspended", suspended],
+            ["Expired", expired],
+          ].map(([label, value]) => (
+            <div
+              key={String(label)}
+              className="rounded-2xl border border-border bg-card p-5"
+            >
+              <p className="text-sm text-muted-foreground">{label}</p>
+              <p className="mt-2 text-3xl font-semibold">{value}</p>
+            </div>
+          ))}
+        </section>
 
-        <Card>
-          <CardHeader>
-            <CardTitle>Customer accounts</CardTitle>
-            <CardDescription>
-              Account status and current plan assignment.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            {rows.length === 0 ? (
-              <div className="rounded-lg border border-dashed p-8 text-center text-sm text-muted-foreground">
-                No customer accounts found.
-              </div>
-            ) : (
-              <Table>
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>Client</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead>Current plan</TableHead>
-                    <TableHead>Created</TableHead>
-                    <TableHead>Account ID</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {rows.map((account) => (
-                    <TableRow key={account.id}>
-                      <TableCell className="font-medium">
-                        {account.name}
-                      </TableCell>
-                      <TableCell>
-                        <span
-                          className={`inline-flex rounded-full border px-2.5 py-1 text-xs font-medium capitalize ${statusClass(
-                            account.status
-                          )}`}
-                        >
-                          {account.status}
-                        </span>
-                      </TableCell>
-                      <TableCell>{account.planName}</TableCell>
-                      <TableCell>
-                        {dateFormatter.format(new Date(account.created_at))}
-                      </TableCell>
-                      <TableCell className="font-mono text-xs text-muted-foreground">
-                        {account.id}
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            )}
-          </CardContent>
-        </Card>
+        <section className="rounded-2xl border border-border bg-card">
+          <div className="border-b border-border p-5">
+            <h2 className="text-lg font-semibold">Client accounts</h2>
+          </div>
+
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead className="border-b border-border text-muted-foreground">
+                <tr>
+                  <th className="px-5 py-3 font-medium">Client</th>
+                  <th className="px-5 py-3 font-medium">Status</th>
+                  <th className="px-5 py-3 font-medium">Current plan</th>
+                  <th className="px-5 py-3 font-medium">Created</th>
+                  <th className="px-5 py-3 font-medium">Account ID</th>
+                  <th className="px-5 py-3 font-medium">Control</th>
+                </tr>
+              </thead>
+
+              <tbody className="divide-y divide-border">
+                {accountRows.map((account) => (
+                  <tr key={account.id}>
+                    <td className="px-5 py-4 font-medium">{account.name}</td>
+                    <td className="px-5 py-4 capitalize">
+                      {statusMap.get(account.id) ?? "unknown"}
+                    </td>
+                    <td className="px-5 py-4 text-muted-foreground">
+                      {currentPlanMap.get(account.id) ?? "No current plan"}
+                    </td>
+                    <td className="px-5 py-4 text-muted-foreground">
+                      {formatDate(account.created_at)}
+                    </td>
+                    <td className="px-5 py-4 font-mono text-xs text-muted-foreground">
+                      {account.id}
+                    </td>
+                    <td className="px-5 py-4">
+                      <Link
+                        href={`/platform/accounts/${account.id}`}
+                        className="inline-flex rounded-lg border border-border px-3 py-2 text-sm font-medium hover:bg-muted"
+                      >
+                        Open client
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+
+                {accountRows.length === 0 ? (
+                  <tr>
+                    <td
+                      colSpan={6}
+                      className="px-5 py-10 text-center text-muted-foreground"
+                    >
+                      No accounts found.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </section>
       </div>
     </main>
   )
