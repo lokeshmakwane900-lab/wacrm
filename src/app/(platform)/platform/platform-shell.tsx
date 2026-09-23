@@ -5,6 +5,7 @@ import { usePathname } from 'next/navigation'
 import {
   BarChart3,
   Building2,
+  Coins,
   LayoutDashboard,
   Settings,
   ShieldCheck,
@@ -20,6 +21,7 @@ const navItems = [
   { href: '/platform/accounts', label: 'Clients', icon: Building2 },
   { href: '/platform/plans', label: 'Plans', icon: SlidersHorizontal },
   { href: '/platform/usage', label: 'Usage', icon: BarChart3 },
+  { href: '/platform/credits', label: 'Credits & Billing', icon: Coins },
   { href: '/platform/settings', label: 'Settings', icon: Settings },
 ]
 
@@ -27,6 +29,7 @@ function pageTitle(pathname: string) {
   if (pathname.startsWith('/platform/accounts')) return 'Clients'
   if (pathname.startsWith('/platform/plans')) return 'Plans'
   if (pathname.startsWith('/platform/usage')) return 'Usage'
+  if (pathname.startsWith('/platform/credits')) return 'Credits & Billing'
   if (pathname.startsWith('/platform/settings')) return 'Settings'
   return 'Overview'
 }
