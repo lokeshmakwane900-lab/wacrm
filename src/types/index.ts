@@ -699,3 +699,56 @@ export interface QuickReply {
   created_at: string;
   updated_at: string;
 }
+
+// ============================================================
+// Credits Core Backend Foundation V1 (055_credits_core.sql)
+// ============================================================
+
+export type CreditTransactionType =
+  | 'admin_credit'
+  | 'admin_debit'
+  | 'promotional_credit'
+  | 'refund'
+  | 'usage';
+
+export type ManualCreditTransactionType =
+  | 'admin_credit'
+  | 'admin_debit'
+  | 'promotional_credit'
+  | 'refund';
+
+export interface CreditAccount {
+  account_id: string;
+  currency: 'INR';
+  balance_paise: number;
+  lifetime_credited_paise: number;
+  lifetime_debited_paise: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CreditTransaction {
+  id: string;
+  account_id: string;
+  transaction_type: CreditTransactionType;
+  amount_paise: number;
+  balance_before_paise: number;
+  balance_after_paise: number;
+  reason: string;
+  reference_type?: string | null;
+  reference_id?: string | null;
+  idempotency_key?: string | null;
+  actor_user_id?: string | null;
+  created_at: string;
+}
+
+export interface CreditAdjustmentResult {
+  transaction_id: string;
+  account_id: string;
+  transaction_type: CreditTransactionType;
+  amount_paise: number;
+  balance_before_paise: number;
+  balance_after_paise: number;
+  created_at: string;
+  is_idempotent_replay: boolean;
+}
